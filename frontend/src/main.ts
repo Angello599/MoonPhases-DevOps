@@ -2,6 +2,7 @@ import { MoonRenderer } from '@/components/MoonRenderer'
 import { DateTracker } from '@/components/DateTracker'
 import { Timeline } from '@/components/Timeline'
 import { ta } from '@/core/ta'
+import { NotesPanel } from '@/components/NotesPanel'
 
 /**
  * Clase principal de la aplicación de seguimiento de fases lunares en 3D
@@ -13,6 +14,7 @@ class MoonPhaseApp {
   private dateDisplay!: HTMLElement
   private phaseDisplay!: HTMLElement
   private isUpdatingFromTimeline: boolean = false
+  private notesPanel!: NotesPanel
 
   /**
   * Inicializa la aplicación
@@ -22,6 +24,7 @@ class MoonPhaseApp {
     this.initRenderer()
     this.initDateTracker()
     this.initTimeline()
+    this.initNotesPanel() 
     this.setupKeyboardControls()
     this.updateUI()
   }
@@ -77,10 +80,24 @@ class MoonPhaseApp {
   }
 
   /**
+   * Initialize the moon observation notes panel
+   */
+  private initNotesPanel(): void {
+    this.notesPanel = new NotesPanel()
+    this.notesPanel.setDate(this.dateTracker.getCurrentDate())
+  }
+
+  /**
   * Configura los controles de teclado para la navegación
    */
   private setupKeyboardControls(): void {
     document.addEventListener('keydown', (e: KeyboardEvent) => {
+      const activeElement = document.activeElement
+      const isTyping = activeElement instanceof HTMLTextAreaElement ||
+                        activeElement instanceof HTMLInputElement
+      if (isTyping) {
+        return
+      }
       switch (e.key) {
       case 'ArrowLeft':
         e.preventDefault()
