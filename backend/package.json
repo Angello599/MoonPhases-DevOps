@@ -1,0 +1,18 @@
+{
+  "name": "moonphases-backend",
+  "version": "1.0.0",
+  "description": "API para el Diario de Observacion Lunar (MoonPhases)",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test tests/"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "pg": "^8.12.0",
+    "dotenv": "^16.4.5"
+  }
+}
