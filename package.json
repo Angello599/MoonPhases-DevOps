@@ -1,0 +1,27 @@
+{
+  "name": "moonphases-devops-main",
+  "version": "1.0.0",
+  "description": "MoonPhases es una aplicación para visualizar las fases lunares de forma interactiva. La solución consiste en un simulador 3D desarrollado con Three.js que permite explorar el ciclo lunar y consultar sus fases a lo largo del tiempo.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Angello599/MoonPhases-DevOps.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Angello599/MoonPhases-DevOps/issues"
+  },
+  "homepage": "https://github.com/Angello599/MoonPhases-DevOps#readme",
+  "devDependencies": {
+    "vitest": "^5.0.1"
+  }
+}
