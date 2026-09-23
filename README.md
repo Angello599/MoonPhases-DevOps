@@ -89,7 +89,22 @@ La base de datos se inicializa automáticamente con `backend/db/schema.sql` la p
 
 ## Pruebas
 
-Próximamente
+- Pruebas unitarias
+
+Desde la raíz del proyecto, ejecutar:
+
+```bash
+npm test
+```
+
+Este comando ejecuta las 9 pruebas unitarias mediante Vitest.  
+
+- Automatización de pruebas
+Para ejecutar el script de automatización mediante Bash:
+
+```bash
+./run-tests.sh
+```
 
 ---
 Proyecto basado en [MoonPhases](https://github.com/NeaByteLab/MoonPhases) de NeaByteLab.
