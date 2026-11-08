@@ -1,0 +1,5 @@
+^/src/\.git/
+^/src/reports/
+^/src/node_modules/
+^/src/backend/node_modules/
+^/src/frontend/node_modules/

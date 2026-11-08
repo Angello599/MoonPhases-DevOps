@@ -103,7 +103,7 @@ Este comando ejecuta las 9 pruebas unitarias mediante Vitest.
 Para ejecutar el script de automatización mediante Bash:
 
 ```bash
-./run-tests.sh
+./scripts/run-tests.sh
 ```
 
 ---

@@ -5,10 +5,22 @@ node_modules/
 dist/
 build/
 
-# Environment files
+# Environment files (se versiona solo una plantilla .env.example)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+
+# Secrets y credenciales: solo locales, nunca en Git
+pg_password.txt
+secrets/
+*.pem
+*.key
+*.p12
+
+# Docker: overrides locales de Compose
+compose.override.yaml
+compose.override.yml
+docker-compose.override.yml
 
 # IDE
 .vscode/
@@ -24,14 +36,16 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# Runtime
+# Runtime, caches y cobertura
 .cache/
+.vite/
+.eslintcache
+*.tsbuildinfo
+coverage/
+.nyc_output/
 
-# env
-.env
-.env.dev
+# Reportes de seguridad
+# - secret scanning: pueden contener los valores de los secretos detectados
+reports/*
 
-
-# password files
-
-pg_password.txt
+docs/fases
