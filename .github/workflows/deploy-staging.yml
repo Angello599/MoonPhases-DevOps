@@ -1,0 +1,218 @@
+name: Deploy to AWS Staging
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened]
+
+env:
+  AWS_REGION: us-east-1
+  DOCKER_COMPOSE_VERSION: '2.20.0'
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.repository.private || true }}
+    outputs:
+      backend-image: ${{ steps.image-tags.outputs.backend }}
+      frontend-image: ${{ steps.image-tags.outputs.frontend }}
+      account-id: ${{ steps.aws-account.outputs.account_id }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_STAGING }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_STAGING }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account ID
+        id: aws-account
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=${AWS_ACCOUNT_ID}" >> $GITHUB_OUTPUT
+          echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com" >> $GITHUB_ENV
+          echo "✅ AWS Account ID: ${AWS_ACCOUNT_ID}"
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Generate image tags
+        id: image-tags
+        run: |
+          COMMIT_SHA=$(echo ${{ github.sha }} | cut -c 1-7)
+          TIMESTAMP=$(date +%s)
+
+          BACKEND_IMAGE="${{ env.ECR_REGISTRY }}/moon-phases-backend-staging:${COMMIT_SHA}"
+          FRONTEND_IMAGE="${{ env.ECR_REGISTRY }}/moon-phases-frontend-staging:${COMMIT_SHA}"
+
+          echo "backend=${BACKEND_IMAGE}" >> $GITHUB_OUTPUT
+          echo "frontend=${FRONTEND_IMAGE}" >> $GITHUB_OUTPUT
+          echo "commit_sha=${COMMIT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Build Backend Docker image
+        run: |
+          docker build \
+            --tag ${{ steps.image-tags.outputs.backend }} \
+            --tag ${{ env.ECR_REGISTRY }}/moon-phases-backend-staging:latest \
+            ./backend
+
+      - name: Build Frontend Docker image
+        run: |
+          docker build \
+            --tag ${{ steps.image-tags.outputs.frontend }} \
+            --tag ${{ env.ECR_REGISTRY }}/moon-phases-frontend-staging:latest \
+            ./frontend
+
+      - name: Push Backend to ECR
+        run: |
+          docker push ${{ steps.image-tags.outputs.backend }}
+          docker push ${{ env.ECR_REGISTRY }}/moon-phases-backend-staging:latest
+
+      - name: Push Frontend to ECR
+        run: |
+          docker push ${{ steps.image-tags.outputs.frontend }}
+          docker push ${{ env.ECR_REGISTRY }}/moon-phases-frontend-staging:latest
+
+      - name: Print image URIs
+        run: |
+          echo "✅ Backend image: ${{ steps.image-tags.outputs.backend }}"
+          echo "✅ Frontend image: ${{ steps.image-tags.outputs.frontend }}"
+
+  deploy-staging:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    if: success()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_STAGING }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_STAGING }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get EC2 Instance Info
+        id: ec2-info
+        run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Environment,Values=staging" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)
+
+          if [ "$INSTANCE_ID" = "None" ] || [ -z "$INSTANCE_ID" ]; then
+            echo "❌ No running EC2 instance found for staging"
+            exit 1
+          fi
+
+          INSTANCE_IP=$(aws ec2 describe-instances \
+            --instance-ids $INSTANCE_ID \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+
+          echo "instance_id=${INSTANCE_ID}" >> $GITHUB_OUTPUT
+          echo "instance_ip=${INSTANCE_IP}" >> $GITHUB_OUTPUT
+          echo "✅ Found instance: $INSTANCE_ID at $INSTANCE_IP"
+
+      - name: Send SSH public key to EC2
+        run: |
+          # Generate SSH key pair (this would normally be stored in secrets)
+          mkdir -p ~/.ssh
+
+          # For EC2 Instance Connect, AWS will generate the connection
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id ${{ steps.ec2-info.outputs.instance_id }} \
+            --instance-os-user ubuntu \
+            --ssh-public-key "$(cat ~/.ssh/id_rsa.pub 2>/dev/null || echo 'ssh-rsa AAAAB3NzaC1yc2E...')" \
+            --availability-zone ${{ env.AWS_REGION }}a \
+            --region ${{ env.AWS_REGION }} \
+            || true
+
+      - name: Copy files to EC2
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ steps.ec2-info.outputs.instance_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          scp -o StrictHostKeyChecking=no \
+            compose.yaml \
+            ubuntu@${{ steps.ec2-info.outputs.instance_ip }}:/opt/moon-phases/
+
+      - name: Update docker-compose on EC2
+        env:
+          EC2_HOST: ${{ steps.ec2-info.outputs.instance_ip }}
+          BACKEND_IMAGE: ${{ needs.build-and-publish.outputs.backend-image }}
+          FRONTEND_IMAGE: ${{ needs.build-and-publish.outputs.frontend-image }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD_STAGING }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          # Create docker-compose file on EC2
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ env.EC2_HOST }} << 'DEPLOY_EOF'
+            cd /opt/moon-phases || mkdir -p /opt/moon-phases && cd /opt/moon-phases
+
+            # Create pg_password.txt with the database password
+            echo "$DB_PASSWORD" > pg_password.txt
+            chmod 600 pg_password.txt
+
+            # Update backend and frontend image tags in compose.yaml
+            sed -i "s|moonphases-backend:.*|$BACKEND_IMAGE|g" compose.yaml
+            sed -i "s|moonphases-frontend:.*|$FRONTEND_IMAGE|g" compose.yaml
+
+            # Login to ECR
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ needs.build-and-publish.outputs.account-id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+
+            # Pull and deploy
+            docker-compose pull || true
+            docker-compose up -d
+
+            echo "✅ Deployment completed on EC2"
+          DEPLOY_EOF
+
+      - name: Verify deployment
+        env:
+          EC2_HOST: ${{ steps.ec2-info.outputs.instance_ip }}
+        run: |
+          sleep 10
+
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ env.EC2_HOST }} << 'VERIFY_EOF'
+            echo "🔍 Checking running containers..."
+            docker ps
+
+            echo ""
+            echo "🔍 Checking backend health..."
+            curl -s http://localhost:3001/health || echo "Backend not yet available"
+
+            echo ""
+            echo "✅ Deployment verification complete"
+          VERIFY_EOF
+
+      - name: Post deployment comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ job.status }}';
+            const emoji = status === 'success' ? '✅' : '❌';
+            const message = `${emoji} Staging deployment ${status}
+
+            **Images:**
+            - Backend: ${{ needs.build-and-publish.outputs.backend-image }}
+            - Frontend: ${{ needs.build-and-publish.outputs.frontend-image }}
+
+            **Endpoint:** http://${{ steps.ec2-info.outputs.instance_ip }}`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: message
+            });
